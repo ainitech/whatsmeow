@@ -35,6 +35,9 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"go.mau.fi/whatsmeow/util/keys"
+	"go.mau.fi/libsignal/session"
+	"go.mau.fi/libsignal/signalerror"
+	"google.golang.org/protobuf/proto"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
@@ -932,7 +935,6 @@ func (cli *Client) StoreLIDPNMapping(ctx context.Context, first, second types.JI
 	}
 }
 
-// ensureLIDSession garante que exista uma sessão Signal para um LID (usuário oculto)
 func (cli *Client) ensureLIDSession(ctx context.Context, to types.JID) error {
 	if to.Server != types.HiddenUserServer {
 		return nil
@@ -965,14 +967,41 @@ func (cli *Client) ensureLIDSession(ctx context.Context, to types.JID) error {
 			}
 		}
 
-		cli.Log.Infof("Sessão Signal criada para @lid: %s", to.String())
+		cli.Log.Info().Str("jid", to.String()).Msg("Sessão Signal criada para @lid")
 	}
 
 	return nil
 }
 
-// FetchPreKeyBundle delega para o e2eClient buscar o bundle de chaves do destinatário
-func (cli *Client) FetchPreKeyBundle(ctx context.Context, jid types.JID) (*waE2E.PreKeyBundle, error) {
-	return cli.e2eClient.FetchPreKeyBundle(ctx, jid)
-}
 
+func (cli *Client) FetchPreKeyBundle(ctx context.Context, to types.JID) (*waE2E.PreKeyBundle, error) {
+	iqNode := binary.Node{
+		Tag: "iq",
+		Attrs: binary.Attrs{
+			"type": "get",
+			"to":   to.String(),
+			"id":   cli.GenerateMessageID(),
+			"xmlns": "encrypt",
+		},
+		Content: []binary.Node{
+			{Tag: "key"},
+		},
+	}
+
+	resp, err := cli.SendIQ(ctx, iqNode)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao obter PreKeyBundle: %w", err)
+	}
+
+	if len(resp.Content) == 0 {
+		return nil, fmt.Errorf("resposta do servidor está vazia")
+	}
+
+	var bundle waE2E.PreKeyBundle
+	err = proto.Unmarshal(resp.Content[0].Data, &bundle)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao decodificar PreKeyBundle: %w", err)
+	}
+
+	return &bundle, nil
+}
