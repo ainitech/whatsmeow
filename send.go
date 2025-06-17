@@ -38,44 +38,6 @@ import (
 
 const WebMessageIDPrefix = "3EB0"
 
-func (cli *Client) ensureLIDSession(ctx context.Context, to types.JID) error {
-	if to.Server != types.HiddenUserServer {
-		return nil
-	}
-
-	signalAddress := to.SignalAddress()
-
-	hasSession, err := cli.Store.ContainsSession(ctx, signalAddress)
-	if err != nil {
-		return fmt.Errorf("error while checking session %s: %w", signalAddress.String(), err)
-	}
-
-	if !hasSession {
-		bundle, err := cli.FetchPreKeyBundle(ctx, to)
-		if err != nil {
-			return fmt.Errorf("prekey bundle error: %w", err)
-		}
-
-		builder := session.NewBuilderFromSignal(cli.Store, signalAddress, pbSerializer)
-		err = builder.ProcessBundle(ctx, bundle)
-		if err != nil {
-			// Attempt to clear
-			if cli.AutoTrustIdentity && signalerror.IsUntrustedIdentity(err) {
-				err = cli.clearUntrustedIdentity(ctx, to)
-				if err == nil {
-					err = builder.ProcessBundle(ctx, bundle)
-				}
-			}
-			if err != nil {
-				return fmt.Errorf("prekey bundle processing error: %w", err)
-			}
-		}
-
-		cli.Log.Info().Str("jid", to.String()).Msg("Signal Session has been created fo @lid")
-	}
-
-	return nil
-}
 
 // GenerateMessageID generates a random string that can be used as a message ID on WhatsApp.
 //
@@ -238,8 +200,8 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
 	}
 
 	if err := cli.ensureLIDSession(ctx, to); err != nil {
-		return SendResponse{}, fmt.Errorf("attempt to generate a LID Session: %w", err)
-	}
+	return SendResponse{}, fmt.Errorf("erro ao garantir sessão Signal com LID: %w", err)
+}
 
 	if req.Timeout == 0 {
 		req.Timeout = defaultRequestTimeout
