@@ -931,3 +931,48 @@ func (cli *Client) StoreLIDPNMapping(ctx context.Context, first, second types.JI
 		cli.Log.Errorf("Failed to store LID-PN mapping for %s -> %s: %v", lid, pn, err)
 	}
 }
+
+// ensureLIDSession garante que exista uma sessão Signal para um LID (usuário oculto)
+func (cli *Client) ensureLIDSession(ctx context.Context, to types.JID) error {
+	if to.Server != types.HiddenUserServer {
+		return nil
+	}
+
+	signalAddress := to.SignalAddress()
+
+	hasSession, err := cli.Store.ContainsSession(ctx, signalAddress)
+	if err != nil {
+		return fmt.Errorf("erro ao verificar sessão com %s: %w", signalAddress.String(), err)
+	}
+
+	if !hasSession {
+		bundle, err := cli.FetchPreKeyBundle(ctx, to)
+		if err != nil {
+			return fmt.Errorf("erro ao buscar prekey bundle: %w", err)
+		}
+
+		builder := session.NewBuilderFromSignal(cli.Store, signalAddress, pbSerializer)
+		err = builder.ProcessBundle(ctx, bundle)
+		if err != nil {
+			if cli.AutoTrustIdentity && signalerror.IsUntrustedIdentity(err) {
+				err = cli.clearUntrustedIdentity(ctx, to)
+				if err == nil {
+					err = builder.ProcessBundle(ctx, bundle)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("erro ao processar prekey bundle: %w", err)
+			}
+		}
+
+		cli.Log.Infof("Sessão Signal criada para @lid: %s", to.String())
+	}
+
+	return nil
+}
+
+// FetchPreKeyBundle delega para o e2eClient buscar o bundle de chaves do destinatário
+func (cli *Client) FetchPreKeyBundle(ctx context.Context, jid types.JID) (*waE2E.PreKeyBundle, error) {
+	return cli.e2eClient.FetchPreKeyBundle(ctx, jid)
+}
+
