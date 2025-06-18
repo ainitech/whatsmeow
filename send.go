@@ -1337,14 +1337,14 @@ func (cli *Client) EnsureSessionForLID(ctx context.Context, lid types.JID) error
 		return fmt.Errorf("JID fornecido não é um LID válido: %s", lid.String())
 	}
 
-	// 1. Verifica se já existe mapeamento para PN
+	// Verifica se já existe mapeamento LID → PN
 	pn, err := cli.Store.LIDs.GetPNForLID(ctx, lid)
 	if err == nil && !pn.IsEmpty() {
 		cli.Log.Debugf("LID %s já possui mapeamento para PN %s", lid, pn)
 		return nil
 	}
 
-	// 2. Verifica se já há uma sessão Signal existente
+	// Verifica se já há uma sessão Signal com o LID
 	hasSession, err := cli.Store.ContainsSession(ctx, lid.SignalAddress())
 	if err != nil {
 		return fmt.Errorf("erro ao verificar sessão Signal para LID %s: %w", lid, err)
@@ -1354,28 +1354,25 @@ func (cli *Client) EnsureSessionForLID(ctx context.Context, lid types.JID) error
 		return nil
 	}
 
-	// 3. Tenta buscar o prekey bundle
-	bundle, err := cli.fetchPreKeys(ctx, []types.JID{lid})
+	// Busca prekey bundle via fetchPreKeys
+	resp, err := cli.fetchPreKeys(ctx, []types.JID{lid})
 	if err != nil {
 		return fmt.Errorf("erro ao buscar prekeys: %w", err)
 	}
-	bundleResp := bundle[lid]
-	if bundleResp.err != nil {
-		return fmt.Errorf("erro na resposta ao buscar prekeys para %s: %w", lid, bundleResp.err)
+	result := resp[lid]
+	if result.err != nil {
+		return fmt.Errorf("erro interno ao obter prekey do LID %s: %w", lid, result.err)
 	}
-	signalBundle := bundleResp.bundle
-	if err != nil {
-		return fmt.Errorf("erro ao buscar prekey bundle para LID %s: %w", lid, err)
-	}
+	signalBundle := result.bundle
 
-	// 4. Tenta criar a sessão Signal
+	// Cria sessão Signal
 	builder := session.NewBuilderFromSignal(cli.Store, lid.SignalAddress(), pbSerializer)
-	err = builder.ProcessBundle(ctx, bundle)
+	err = builder.ProcessBundle(ctx, signalBundle)
 	if err != nil {
 		if cli.AutoTrustIdentity && signalerror.IsUntrustedIdentity(err) {
 			err = cli.clearUntrustedIdentity(ctx, lid)
 			if err == nil {
-				err = builder.ProcessBundle(ctx, bundle)
+				err = builder.ProcessBundle(ctx, signalBundle)
 			}
 		}
 		if err != nil {
@@ -1383,6 +1380,6 @@ func (cli *Client) EnsureSessionForLID(ctx context.Context, lid types.JID) error
 		}
 	}
 
-	cli.Log.Infof("Sessão Signal criada manualmente para LID %s", lid.String())
+	cli.Log.Debugf("Sessão Signal criada manualmente para LID %s", lid)
 	return nil
 }
