@@ -36,6 +36,8 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+
+
 const WebMessageIDPrefix = "3EB0"
 
 // GenerateMessageID generates a random string that can be used as a message ID on WhatsApp.
@@ -198,8 +200,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
 		return SendResponse{}, ErrNotLoggedIn
 	}
 
-	if err := cli.ensureLIDSession(ctx, to); err != nil {
-		return SendResponse{}, fmt.Errorf("attempt to generate a LID Session: %w", err)
+	if to.Server == types.HiddenUserServer {
+		if err := cli.EnsureSessionForLID(ctx, to); err != nil {
+			return SendResponse{}, fmt.Errorf("não foi possível garantir sessão com LID %s: %w", to.String(), err)
+		}
 	}
 
 	if req.Timeout == 0 {
@@ -1351,7 +1355,15 @@ func (cli *Client) EnsureSessionForLID(ctx context.Context, lid types.JID) error
 	}
 
 	// 3. Tenta buscar o prekey bundle
-	bundle, err := cli.FetchPreKeyBundle(ctx, lid)
+	bundle, err := cli.fetchPreKeys(ctx, []types.JID{lid})
+	if err != nil {
+		return fmt.Errorf("erro ao buscar prekeys: %w", err)
+	}
+	bundleResp := bundle[lid]
+	if bundleResp.err != nil {
+		return fmt.Errorf("erro na resposta ao buscar prekeys para %s: %w", lid, bundleResp.err)
+	}
+	signalBundle := bundleResp.bundle
 	if err != nil {
 		return fmt.Errorf("erro ao buscar prekey bundle para LID %s: %w", lid, err)
 	}
@@ -1371,6 +1383,6 @@ func (cli *Client) EnsureSessionForLID(ctx context.Context, lid types.JID) error
 		}
 	}
 
-	cli.Log.Info().Str("lid", lid.String()).Msg("Sessão Signal criada manualmente para LID")
+	cli.Log.Infof("Sessão Signal criada manualmente para LID %s", lid.String())
 	return nil
 }
