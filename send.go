@@ -38,45 +38,6 @@ import (
 
 const WebMessageIDPrefix = "3EB0"
 
-func (cli *Client) ensureLIDSession(ctx context.Context, to types.JID) error {
-	if to.Server != types.HiddenUserServer {
-		return nil
-	}
-
-	signalAddress := to.SignalAddress()
-
-	hasSession, err := cli.Store.ContainsSession(ctx, signalAddress)
-	if err != nil {
-		return fmt.Errorf("error while checking session %s: %w", signalAddress.String(), err)
-	}
-
-	if !hasSession {
-		bundle, err := cli.FetchPreKeyBundle(ctx, to)
-		if err != nil {
-			return fmt.Errorf("prekey bundle error: %w", err)
-		}
-
-		builder := session.NewBuilderFromSignal(cli.Store, signalAddress, pbSerializer)
-		err = builder.ProcessBundle(ctx, bundle)
-		if err != nil {
-			// Attempt to clear
-			if cli.AutoTrustIdentity && signalerror.IsUntrustedIdentity(err) {
-				err = cli.clearUntrustedIdentity(ctx, to)
-				if err == nil {
-					err = builder.ProcessBundle(ctx, bundle)
-				}
-			}
-			if err != nil {
-				return fmt.Errorf("prekey bundle processing error: %w", err)
-			}
-		}
-
-		cli.Log.Info().Str("jid", to.String()).Msg("Signal Session has been created fo @lid")
-	}
-
-	return nil
-}
-
 // GenerateMessageID generates a random string that can be used as a message ID on WhatsApp.
 //
 //	msgID := cli.GenerateMessageID()
@@ -1365,4 +1326,51 @@ func (cli *Client) encryptMessageForDevice(
 		Attrs:   encAttrs,
 		Content: ciphertext.Serialize(),
 	}, includeDeviceIdentity, nil
+}
+
+func (cli *Client) EnsureSessionForLID(ctx context.Context, lid types.JID) error {
+	if lid.Server != types.HiddenUserServer {
+		return fmt.Errorf("JID fornecido não é um LID válido: %s", lid.String())
+	}
+
+	// 1. Verifica se já existe mapeamento para PN
+	pn, err := cli.Store.LIDs.GetPNForLID(ctx, lid)
+	if err == nil && !pn.IsEmpty() {
+		cli.Log.Debugf("LID %s já possui mapeamento para PN %s", lid, pn)
+		return nil
+	}
+
+	// 2. Verifica se já há uma sessão Signal existente
+	hasSession, err := cli.Store.ContainsSession(ctx, lid.SignalAddress())
+	if err != nil {
+		return fmt.Errorf("erro ao verificar sessão Signal para LID %s: %w", lid, err)
+	}
+	if hasSession {
+		cli.Log.Debugf("Sessão Signal já existe para LID %s", lid)
+		return nil
+	}
+
+	// 3. Tenta buscar o prekey bundle
+	bundle, err := cli.FetchPreKeyBundle(ctx, lid)
+	if err != nil {
+		return fmt.Errorf("erro ao buscar prekey bundle para LID %s: %w", lid, err)
+	}
+
+	// 4. Tenta criar a sessão Signal
+	builder := session.NewBuilderFromSignal(cli.Store, lid.SignalAddress(), pbSerializer)
+	err = builder.ProcessBundle(ctx, bundle)
+	if err != nil {
+		if cli.AutoTrustIdentity && signalerror.IsUntrustedIdentity(err) {
+			err = cli.clearUntrustedIdentity(ctx, lid)
+			if err == nil {
+				err = builder.ProcessBundle(ctx, bundle)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("falha ao processar bundle para LID %s: %w", lid, err)
+		}
+	}
+
+	cli.Log.Info().Str("lid", lid.String()).Msg("Sessão Signal criada manualmente para LID")
+	return nil
 }
