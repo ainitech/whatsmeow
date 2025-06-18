@@ -1322,3 +1322,86 @@ func (cli *Client) encryptMessageForDevice(
 		Content: ciphertext.Serialize(),
 	}, includeDeviceIdentity, nil
 }
+
+
+// RelayMessage
+func (cli *Client) RelayMessage(ctx context.Context, to types.JID, msg *waE2E.Message, opts *RelayOptions) (string, error) {
+	if cli == nil {
+		return "", fmt.Errorf("client is nil")
+	}
+
+	msgID := opts.MessageID
+	if msgID == "" {
+		msgID = cli.GenerateMessageID()
+	}
+
+	plaintext, err := proto.Marshal(msg)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	encAttrs := waBinary.Attrs{"v": "2"}
+	for k, v := range opts.Attributes {
+		encAttrs[k] = v
+	}
+
+	encrypted, includeDeviceIdentity, err := cli.encryptMessageForDevice(ctx, plaintext, to, nil, encAttrs)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt message: %w", err)
+	}
+
+	encNode := *encrypted
+
+	content := []waBinary.Node{encNode}
+	if includeDeviceIdentity {
+		identityNode := cli.getDeviceIdentityNode()
+		if identityNode != nil {
+			content = append(content, *identityNode)
+		}
+	}
+	if len(opts.Nodes) > 0 {
+		content = append(content, opts.Nodes...)
+	}
+
+	node := waBinary.Node{
+		Tag:     "message",
+		Attrs:   waBinary.Attrs{"id": msgID, "to": to.String(), "type": "text"},
+		Content: content,
+	}
+
+	// Add attrs personalizados se existir
+	for k, v := range opts.Attributes {
+		node.Attrs[k] = v
+	}
+
+	// Adiciona participant se estiver setado (útil em retry receipts)
+	if !opts.Participant.IsEmpty() {
+		node.Attrs["participant"] = opts.Participant.String()
+	}
+
+	err = cli.sendNode(node)
+	if err != nil {
+		return "", fmt.Errorf("failed to send node: %w", err)
+	}
+
+	cli.addRecentMessage(to, types.MessageID(msgID), msg, nil)
+
+	return msgID, nil
+}
+
+func (cli *Client) getDeviceIdentityNode() *waBinary.Node {
+	if cli.Store == nil || cli.Store.Account == nil {
+		return nil
+	}
+
+	bytes, err := proto.Marshal(cli.Store.Account)
+	if err != nil {
+		cli.Log.Errorf("failed to marshal device identity: %v", err)
+		return nil
+	}
+
+	return &waBinary.Node{
+		Tag:     "device-identity",
+		Content: bytes,
+	}
+}
