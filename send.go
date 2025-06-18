@@ -1369,11 +1369,9 @@ func (cli *Client) EnsureSessionForLID(ctx context.Context, lid types.JID) error
 	builder := session.NewBuilderFromSignal(cli.Store, lid.SignalAddress(), pbSerializer)
 	err = builder.ProcessBundle(ctx, signalBundle)
 	if err != nil {
-		if cli.AutoTrustIdentity && signalerror.IsUntrustedIdentity(err) {
-			err = cli.clearUntrustedIdentity(ctx, lid)
-			if err == nil {
-				err = builder.ProcessBundle(ctx, signalBundle)
-			}
+		if cli.AutoTrustIdentity {
+			_ = cli.clearUntrustedIdentity(ctx, lid)
+			err = builder.ProcessBundle(ctx, signalBundle)
 		}
 		if err != nil {
 			return fmt.Errorf("falha ao processar bundle para LID %s: %w", lid, err)
